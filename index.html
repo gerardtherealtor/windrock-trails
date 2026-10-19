@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#101511">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Windrock">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Windrock Trails</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="hud">
+  <div class="hudbar">
+    <div class="stat"><div class="v" id="hSpeed">--</div><div class="l">mph</div></div>
+    <div class="stat"><div class="v" id="hElev">--</div><div class="l">ft elev</div></div>
+    <div class="stat"><div class="v" id="hHead">--</div><div class="l">heading</div></div>
+    <div class="stat" id="hRecBox"><div class="v" id="hDist">0.0</div><div class="l" id="hDistL">mi today</div></div>
+    <div class="stat"><div class="v" id="hAcc">--</div><div class="l">gps ±ft</div></div>
+  </div>
+</div>
+<div id="area"><select id="areaSel" aria-label="Riding area"></select></div>
+<div id="status" class="off"></div>
+
+<div id="rail">
+  <button class="rb" id="bLocate" title="My location"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg><span>locate</span></button>
+  <button class="rb" id="bLayers" title="Map layer"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg><span>layer</span></button>
+  <button class="rb" id="bWp" title="Drop waypoint here"><svg viewBox="0 0 24 24"><path d="M12 22s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg><span>mark</span></button>
+  <button class="rb" id="bRec" title="Record ride"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" style="fill:currentColor"/></svg><span>record</span></button>
+</div>
+
+<div id="bottom">
+  <button class="bb" id="bTrails">Trails</button>
+  <button class="bb" id="bRides">Rides</button>
+  <button class="bb" id="bOffline">Offline</button>
+</div>
+
+<div id="sheet" role="dialog" aria-modal="true">
+  <header><h2 id="sheetTitle">Panel</h2><button class="x" id="sheetClose" aria-label="Close">×</button></header>
+  <div class="body" id="sheetBody"></div>
+</div>
+<div id="toast"></div>
+<input type="file" id="gpxFile" accept=".gpx,application/gpx+xml" hidden>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="app.js"></script>
+</body>
+</html>
