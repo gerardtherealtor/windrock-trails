@@ -26,13 +26,12 @@ const DB = (()=>{
   function open(){
     if(dbp) return dbp;
     dbp = new Promise((res,rej)=>{
-      const r = indexedDB.open('windrock-trails', 1);
+      const r = indexedDB.open('windrock-trails', 2);
       r.onupgradeneeded = e=>{
         const d = e.target.result;
-        d.createObjectStore('rides',{keyPath:'id'});
-        d.createObjectStore('waypoints',{keyPath:'id'});
-        d.createObjectStore('trails',{keyPath:'key'});
-        d.createObjectStore('kv',{keyPath:'k'});
+        ['rides','waypoints','packs'].forEach(n=>{ if(!d.objectStoreNames.contains(n)) d.createObjectStore(n,{keyPath:'id'}); });
+        if(!d.objectStoreNames.contains('trails')) d.createObjectStore('trails',{keyPath:'key'});
+        if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv',{keyPath:'k'});
       };
       r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
     });
@@ -70,7 +69,7 @@ function fmtDur(ms){ const s=Math.floor(ms/1000); const h=Math.floor(s/3600), m=
 function fmtDate(t){ return new Date(t).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); }
 
 // ---------- map ----------
-const map = L.map('map', {zoomControl:false, attributionControl:true, tap:false});
+const map = L.map('map', {zoomControl:false, attributionControl:true, tap:false, preferCanvas:true});
 L.control.scale({imperial:true, metric:false, position:'bottomleft'}).addTo(map);
 let baseKey = 'sat'; try{ baseKey = localStorage.getItem('wt.base') || 'sat'; }catch(e){}
 if(!LAYERS[baseKey]) baseKey='sat';
@@ -84,6 +83,7 @@ function setBase(k){
 setBase(baseKey);
 
 const trailLayer = L.layerGroup().addTo(map);
+const packLayer = L.layerGroup().addTo(map); // imported trail maps (GPX packs)
 const rideLayer = L.layerGroup().addTo(map);
 const wpLayer = L.layerGroup().addTo(map);
 const liveLayer = L.layerGroup().addTo(map);
@@ -330,21 +330,88 @@ async function shareOrDownload(name, text){
   if(navigator.canShare && navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file], title:name}); return; }catch(e){ if(e.name==='AbortError') return; } }
   download(name, text);
 }
-async function importGpx(file){
-  const txt = await file.text(); const doc = new DOMParser().parseFromString(txt, 'application/xml');
-  if(doc.querySelector('parsererror')){ toast('Could not read that GPX file'); return; }
-  let n=0;
-  for(const trk of doc.querySelectorAll('trk')){
-    const name = (trk.querySelector('name')||{}).textContent || file.name.replace(/\.gpx$/i,'');
-    const pts=[]; let dist=0, prev=null;
-    trk.querySelectorAll('trkpt').forEach(p=>{ const la=+p.getAttribute('lat'), lo=+p.getAttribute('lon'); const el=p.querySelector('ele'); const tm=p.querySelector('time'); const t = tm? Date.parse(tm.textContent) : Date.now(); if(prev) dist+=havKm(prev,[la,lo]); prev=[la,lo]; pts.push([la,lo, el?+el.textContent:null, isNaN(t)?Date.now():t]); });
-    if(pts.length<2) continue;
-    await DB.put('rides', {id:uid(), name, start:pts[0][3], end:pts[pts.length-1][3], dist, pts, area:'Imported'}); n++;
+// ---------- trail packs (imported trail maps) ----------
+const GARMIN_COLORS = {Black:'#222', DarkRed:'#8b0000', DarkGreen:'#006400', DarkYellow:'#9b870c', DarkBlue:'#00008b', DarkMagenta:'#8b008b', DarkCyan:'#008b8b', LightGray:'#d3d3d3', DarkGray:'#a9a9a9', Red:'#ff3b30', Green:'#34c759', Yellow:'#ffd60a', Blue:'#0a84ff', Magenta:'#ff2d55', Cyan:'#32ade6', White:'#fff'};
+function gpxColor(el){
+  // Gaia / gpx_style: <color>RRGGBB</color>; Garmin: <DisplayColor>Red</DisplayColor>; OsmAnd: <osmand:color>#RRGGBB</osmand:color>
+  const c = el.getElementsByTagNameNS('*','color')[0]; if(c && c.textContent.trim()){ const v=c.textContent.trim().replace(/^#/,''); if(/^[0-9a-f]{6,8}$/i.test(v)) return '#'+v.slice(-6); }
+  const g = el.getElementsByTagNameNS('*','DisplayColor')[0]; if(g && GARMIN_COLORS[g.textContent.trim()]) return GARMIN_COLORS[g.textContent.trim()];
+  return null;
+}
+function parseGpx(txt, fallbackName){
+  const doc = new DOMParser().parseFromString(txt, 'application/xml');
+  if(doc.querySelector('parsererror')) return null;
+  const tracks=[], wpts=[];
+  const segsOf = el=>Array.from(el.getElementsByTagNameNS('*','trkseg'));
+  for(const trk of Array.from(doc.getElementsByTagNameNS('*','trk'))){
+    const name = (trk.getElementsByTagNameNS('*','name')[0]||{}).textContent || '';
+    const desc = (trk.getElementsByTagNameNS('*','desc')[0]||{}).textContent || '';
+    const color = gpxColor(trk);
+    for(const seg of segsOf(trk)){
+      const pts=[]; for(const p of Array.from(seg.getElementsByTagNameNS('*','trkpt'))){ const la=+p.getAttribute('lat'), lo=+p.getAttribute('lon'); if(isNaN(la)||isNaN(lo)) continue; const el=p.getElementsByTagNameNS('*','ele')[0]; const tm=p.getElementsByTagNameNS('*','time')[0]; const t = tm? Date.parse(tm.textContent) : NaN; pts.push([la,lo, el?+el.textContent:null, isNaN(t)?null:t]); }
+      if(pts.length>1) tracks.push({name:name.trim()||fallbackName, desc:desc.trim(), color, pts});
+    }
   }
-  for(const w of doc.querySelectorAll('wpt')){ await DB.put('waypoints', {id:uid(), name:(w.querySelector('name')||{}).textContent||'Waypoint', note:(w.querySelector('desc')||{}).textContent||'', lat:+w.getAttribute('lat'), lon:+w.getAttribute('lon'), t:Date.now()}); n++; }
+  for(const rte of Array.from(doc.getElementsByTagNameNS('*','rte'))){
+    const name = (rte.getElementsByTagNameNS('*','name')[0]||{}).textContent || '';
+    const pts = Array.from(rte.getElementsByTagNameNS('*','rtept')).map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon'),null,null]).filter(p=>!isNaN(p[0]));
+    if(pts.length>1) tracks.push({name:name.trim()||fallbackName, desc:'', color:gpxColor(rte), pts});
+  }
+  for(const w of Array.from(doc.getElementsByTagNameNS('*','wpt'))){
+    const la=+w.getAttribute('lat'), lo=+w.getAttribute('lon'); if(isNaN(la)||isNaN(lo)) continue;
+    wpts.push({name:(w.getElementsByTagNameNS('*','name')[0]||{}).textContent||'Waypoint', note:(w.getElementsByTagNameNS('*','desc')[0]||{}).textContent||'', lat:la, lon:lo});
+  }
+  return {tracks, wpts};
+}
+const packLayers = new Map(); // pack id -> layerGroup
+async function renderPacks(){
+  packLayer.clearLayers(); packLayers.clear();
+  let packs=[]; try{ packs = await DB.all('packs'); }catch(e){}
+  packs.forEach(pk=>{
+    if(pk.hidden) return;
+    const g = L.layerGroup();
+    pk.tracks.forEach(t=>{
+      const pl = L.polyline(t.pts.map(p=>[p[0],p[1]]), {color:t.color||'#ff8a1f', weight:3.5, opacity:.95});
+      pl.bindPopup(()=>`<b>${esc(t.name)}</b>${t.desc?'<br>'+esc(t.desc):''}<br><span class="tag">${esc(pk.name)}</span><br><button class="pbtn" data-act="wp-here">Mark here</button>`);
+      pl.bindTooltip(t.name, {sticky:true, direction:'top', opacity:.9});
+      g.addLayer(pl);
+    });
+    pk.wpts.forEach(w=>{ L.circleMarker([w.lat,w.lon], {radius:5, color:'#1a1006', weight:1.5, fillColor:'#ffd166', fillOpacity:1}).bindTooltip(w.name, {direction:'top', offset:[0,-6]}).bindPopup(`<b>${esc(w.name)}</b>${w.note?'<br>'+esc(w.note):''}<br><span class="tag">${esc(pk.name)}</span>`).addTo(g); });
+    packLayer.addLayer(g); packLayers.set(pk.id, g);
+  });
+}
+function packBounds(pk){ const b = L.latLngBounds([]); pk.tracks.forEach(t=>t.pts.forEach(p=>b.extend([p[0],p[1]]))); pk.wpts.forEach(w=>b.extend([w.lat,w.lon])); return b; }
+async function importPack(file){
+  status('Reading trail map…', true);
+  const txt = await file.text();
+  const g = parseGpx(txt, file.name.replace(/\.gpx$/i,''));
+  if(!g){ status(''); toast('Could not read that GPX file'); return; }
+  if(!g.tracks.length && !g.wpts.length){ status(''); toast('No tracks or waypoints in that file'); return; }
+  const pk = {id:uid(), name:file.name.replace(/\.gpx$/i,''), tracks:g.tracks, wpts:g.wpts, t:Date.now(), hidden:false};
+  await DB.put('packs', pk);
+  await renderPacks();
+  status('');
+  const miles = g.tracks.reduce((s,t)=>{ let d=0; for(let i=1;i<t.pts.length;i++) d+=havKm(t.pts[i-1],t.pts[i]); return s+d; },0)*1000*M2MI;
+  toast(`Added ${g.tracks.length} trails (${fmt1(miles)} mi) and ${g.wpts.length} points`);
+  const b = packBounds(pk); if(b.isValid()) map.fitBounds(b.pad(0.05));
+  if(sheetOpen==='trails') renderTrailsPanel();
+}
+async function importRide(file){
+  const g = parseGpx(await file.text(), file.name.replace(/\.gpx$/i,''));
+  if(!g){ toast('Could not read that GPX file'); return; }
+  let n=0;
+  for(const t of g.tracks){
+    let dist=0; for(let i=1;i<t.pts.length;i++) dist+=havKm(t.pts[i-1],t.pts[i]);
+    const times = t.pts.map(p=>p[3]).filter(x=>x);
+    const start = times.length? Math.min(...times) : Date.now(), end = times.length? Math.max(...times) : start;
+    await DB.put('rides', {id:uid(), name:t.name, start, end, dist, pts:t.pts.map(p=>[p[0],p[1],p[2],p[3]||start]), area:'Imported'}); n++;
+  }
+  for(const w of g.wpts){ await DB.put('waypoints', {id:uid(), name:w.name, note:w.note, lat:w.lat, lon:w.lon, t:Date.now()}); n++; }
   renderWaypoints(); renderRides(); toast(`Imported ${n} item${n===1?'':'s'}`);
 }
-$('gpxFile').addEventListener('change', e=>{ const f=e.target.files[0]; if(f) importGpx(f); e.target.value=''; });
+let gpxMode = 'ride';
+renderPacks();
+$('gpxFile').addEventListener('change', e=>{ const f=e.target.files[0]; if(f){ if(gpxMode==='pack') importPack(f); else importRide(f); } e.target.value=''; });
 
 // ---------- sheet ----------
 let sheetOpen = null;
@@ -355,8 +422,14 @@ $('bTrails').dataset.key='trails'; $('bRides').dataset.key='rides'; $('bOffline'
 function toggleSheet(key, fn){ if(sheetOpen===key) closeSheet(); else fn(); }
 
 // Trails panel
-function renderTrailsPanel(){
+async function renderTrailsPanel(){
+  let packs=[]; try{ packs = await DB.all('packs'); }catch(e){}
   openSheet('Trails & map', `
+    <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:4px 0">Your trail maps</h3>
+    <p class="help">The best trail data for these parks is not in OpenStreetMap. Import a GPX trail map (the park's own file, a purchased map, or one from another rider) and it becomes a permanent layer that works offline.</p>
+    <div class="actions"><button class="sb primary" id="pImport">Import trail map (GPX)</button></div>
+    ${packs.map(pk=>`<div class="row"><div class="t"><b>${esc(pk.name)}</b><small>${pk.tracks.length} trails · ${pk.wpts.length} points</small></div><button class="sb" data-pshow="${pk.id}">${pk.hidden?'Show':'Hide'}</button><button class="sb" data-pzoom="${pk.id}">Zoom</button><button class="sb danger" data-pdel="${pk.id}">✕</button></div>`).join('')}
+    <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:18px 0 4px">OpenStreetMap trails</h3>
     <p class="help">Trail lines come from OpenStreetMap and load for whatever is on screen once you are zoomed in to about a 1-mile scale. The first load of a new area can take 10 to 20 seconds. Tap a line for its name, number and surface. Areas you have viewed stay cached for offline use.</p>
     <div class="legend"><span><i style="border-color:#ff8a1f"></i>Track / OHV road</span><span><i style="border-color:#ffe066;border-top-style:dashed"></i>Path / singletrack</span><span><i style="border-color:#cfd8d0"></i>Road</span><span><i style="border-color:#ff5c5c"></i>Recording</span><span><i style="border-color:#5bd36a"></i>Saved ride</span></div>
     <div class="actions"><button class="sb ${trailsOn?'primary':''}" id="tToggle">${trailsOn?'Trails on':'Trails off'}</button><button class="sb" id="tReload">Reload this view</button></div>
@@ -364,6 +437,10 @@ function renderTrailsPanel(){
     <div class="grid" id="layerGrid">${Object.entries(LAYERS).map(([k,c])=>`<button class="sb ${k===baseKey?'on':''}" data-layer="${k}">${c.name}<small>${c.sub}</small></button>`).join('')}</div>
     <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:18px 0 4px">Jump to</h3>
     <div class="grid">${AREAS.map(a=>`<button class="sb" data-area="${a.id}">${a.name.split(' (')[0]}<small>${a.name.includes('(')?a.name.split(' (')[1].replace(')',''):''}</small></button>`).join('')}</div>`, 'trails');
+  $('pImport').onclick = ()=>{ gpxMode='pack'; $('gpxFile').click(); };
+  $('sheetBody').querySelectorAll('[data-pshow]').forEach(b=>b.onclick=async()=>{ const pk = await DB.get('packs', b.dataset.pshow); pk.hidden=!pk.hidden; await DB.put('packs', pk); await renderPacks(); renderTrailsPanel(); });
+  $('sheetBody').querySelectorAll('[data-pzoom]').forEach(b=>b.onclick=async()=>{ const pk = await DB.get('packs', b.dataset.pzoom); const bb=packBounds(pk); if(bb.isValid()) map.fitBounds(bb.pad(0.05)); closeSheet(); });
+  $('sheetBody').querySelectorAll('[data-pdel]').forEach(b=>b.onclick=async()=>{ if(b.dataset.confirm){ await DB.del('packs', b.dataset.pdel); await renderPacks(); renderTrailsPanel(); } else { b.dataset.confirm='1'; b.textContent='Delete?'; } });
   $('tToggle').onclick = ()=>{ trailsOn=!trailsOn; try{ localStorage.setItem('wt.trails', trailsOn?'1':'0'); }catch(e){} loadTrails(); renderTrailsPanel(); };
   $('tReload').onclick = ()=>{ const cells = gridCells(map.getBounds().pad(0.05)); cells.forEach(c=>{ trailCache.delete(c.key); DB.del('trails', c.key).catch(()=>{}); }); trailFeatures.forEach(pl=>trailLayer.removeLayer(pl)); trailFeatures.clear(); trailRetries=0; loadTrails(); closeSheet(); };
   $('layerGrid').querySelectorAll('[data-layer]').forEach(b=>b.onclick=()=>{ setBase(b.dataset.layer); renderTrailsPanel(); });
@@ -382,7 +459,7 @@ async function renderRides(){
     <p class="help">${rides.length} ride${rides.length===1?'':'s'} · ${fmt1(total)} mi total · ${wps.length} waypoint${wps.length===1?'':'s'}. Everything is stored on this phone only.</p>
     ${rides.length? rides.map(r=>`<div class="row"><div class="t"><b>${esc(r.name)}</b><small>${fmtDate(r.start)} · ${fmt1(r.dist*1000*M2MI)} mi · ${fmtDur(r.end-r.start)}${r.area?' · '+esc(r.area):''}</small></div><button class="sb" data-show="${r.id}">${shownRides.has(r.id)?'Hide':'Show'}</button><button class="sb" data-exp="${r.id}">GPX</button><button class="sb danger" data-del="${r.id}">✕</button></div>`).join('') : '<p class="help">No rides yet. Tap <b>record</b> on the right rail when you head out.</p>'}
     ${wps.length? '<h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:18px 0 0">Waypoints</h3>' + wps.sort((a,b)=>b.t-a.t).map(w=>`<div class="row"><div class="t"><b>${esc(w.name)}</b><small>${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}${w.note?' · '+esc(w.note):''}</small></div><button class="sb" data-go="${w.id}">Go</button><button class="sb danger" data-wdel="${w.id}">✕</button></div>`).join('') : ''}`, 'rides');
-  $('rImport').onclick = ()=>$('gpxFile').click();
+  $('rImport').onclick = ()=>{ gpxMode='ride'; $('gpxFile').click(); };
   $('rExportAll').onclick = ()=>shareOrDownload(`windrock-all-${new Date().toISOString().slice(0,10)}.gpx`, gpxOf(rides, wps));
   const body = $('sheetBody');
   body.querySelectorAll('[data-show]').forEach(b=>b.onclick=async()=>{ const id=b.dataset.show; await showRide(id, !shownRides.has(id)); if(shownRides.has(id)) closeSheet(); else renderRides(); });
@@ -451,5 +528,5 @@ if(!navigator.onLine) status('Offline: using saved maps', true);
 
 // close sheet on map tap
 map.on('click', ()=>{ if(sheetOpen) closeSheet(); });
-window.WT = {map, DB, gpxOf, loadTrails};
+window.WT = {map, DB, gpxOf, loadTrails, importPack, renderPacks};
 })();

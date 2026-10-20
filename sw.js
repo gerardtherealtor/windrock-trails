@@ -1,5 +1,5 @@
 // Windrock Trails service worker: app shell cached on install, map tiles cached as you ride.
-const SHELL = 'wt-shell-v2';
+const SHELL = 'wt-shell-v3';
 const TILES = 'wt-tiles';
 const SHELL_FILES = ['./', 'index.html', 'app.js', 'app.css', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/images/layers.png', 'https://unpkg.com/leaflet@1.9.4/dist/images/layers-2x.png', 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png'];
 const TILE_HOSTS = ['server.arcgisonline.com', 'basemap.nationalmap.gov', 'tile.opentopomap.org', 'tile.openstreetmap.org'];
