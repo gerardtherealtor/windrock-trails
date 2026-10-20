@@ -2,12 +2,12 @@
 'use strict';
 // ---------- config ----------
 const AREAS = [
-  // Starting views. Trail lines come from OpenStreetMap for whatever is on screen, so these just get you to the right mountain.
-  {id:'windrock', name:'Windrock Park (Oliver Springs)', lat:36.115, lon:-84.365, z:13, bbox:[36.03,-84.46,36.22,-84.27]},
-  {id:'brimstone', name:'Brimstone Recreation (Huntsville)', lat:36.405, lon:-84.505, z:13, bbox:[36.33,-84.61,36.48,-84.41]},
-  {id:'royalblue', name:'Royal Blue / North Cumberland WMA', lat:36.330, lon:-84.330, z:12, bbox:[36.22,-84.46,36.46,-84.19]},
-  {id:'coalcreek', name:'Coal Creek OHV (Briceville)', lat:36.195, lon:-84.325, z:13, bbox:[36.14,-84.41,36.26,-84.24]},
-  {id:'huntsville', name:'Huntsville, TN', lat:36.416, lon:-84.493, z:13, bbox:[36.36,-84.56,36.47,-84.43]},
+  // Starting views and offline-download bounds, matched to the bundled trail maps.
+  {id:'windrock', name:'Windrock Park (Oliver Springs)', lat:36.13, lon:-84.33, z:13, bbox:[36.04,-84.43,36.27,-84.19]},
+  {id:'coalcreek', name:'Coal Creek OHV', lat:36.19, lon:-84.30, z:13, bbox:[36.04,-84.43,36.28,-84.18]},
+  {id:'brimstone', name:'Brimstone Recreation (Huntsville)', lat:36.32, lon:-84.46, z:13, bbox:[36.25,-84.56,36.39,-84.37]},
+  {id:'royalblue', name:'Royal Blue WMA', lat:36.29, lon:-84.34, z:12, bbox:[36.12,-84.45,36.45,-84.23]},
+  {id:'sundquist', name:'Sundquist WMA', lat:36.42, lon:-84.17, z:13, bbox:[36.35,-84.29,36.49,-84.05]},
 ];
 const LAYERS = {
   sat:  {name:'Satellite', sub:'Esri World Imagery', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr:'Esri, Maxar, Earthstar Geographics', maxZoom:19},
@@ -371,7 +371,7 @@ async function renderPacks(){
     if(pk.hidden) return;
     const g = L.layerGroup();
     pk.tracks.forEach(t=>{
-      const pl = L.polyline(t.pts.map(p=>[p[0],p[1]]), {color:t.color||'#ff8a1f', weight:3.5, opacity:.95});
+      const pl = L.polyline(t.pts.map(p=>[p[0],p[1]]), {color:t.color||pk.color||'#ff8a1f', weight:3.5, opacity:.95});
       pl.bindPopup(()=>`<b>${esc(t.name)}</b>${t.desc?'<br>'+esc(t.desc):''}<br><span class="tag">${esc(pk.name)}</span><br><button class="pbtn" data-act="wp-here">Mark here</button>`);
       pl.bindTooltip(t.name, {sticky:true, direction:'top', opacity:.9});
       g.addLayer(pl);
@@ -410,7 +410,28 @@ async function importRide(file){
   renderWaypoints(); renderRides(); toast(`Imported ${n} item${n===1?'':'s'}`);
 }
 let gpxMode = 'ride';
-renderPacks();
+// Bundled trail maps (maps/index.json) install themselves into IndexedDB on first load, then work offline.
+async function installBuiltinPacks(){
+  let index; try{ const r = await fetch('maps/index.json', {cache:'no-cache'}); if(!r.ok) return; index = await r.json(); }catch(e){ return; }
+  let have=[]; try{ have = await DB.all('packs'); }catch(e){}
+  const byId = new Map(have.map(p=>[p.id,p]));
+  const todo = index.filter(m=>{ const cur = byId.get(m.id); return !cur || cur.ver !== m.ver; });
+  if(!todo.length) return;
+  status(`Installing trail maps (${todo.length})…`, true);
+  let n=0;
+  for(const m of todo){
+    try{
+      const r = await fetch(m.file); if(!r.ok) continue;
+      const pk = await r.json(); const cur = byId.get(m.id);
+      pk.hidden = cur ? !!cur.hidden : false; pk.t = Date.now();
+      await DB.put('packs', pk); n++;
+    }catch(e){}
+  }
+  await renderPacks();
+  status(n ? `Trail maps ready: ${index.map(m=>m.name.split(' ')[0]).join(', ')}` : '');
+  if(sheetOpen==='trails') renderTrailsPanel();
+}
+renderPacks().then(installBuiltinPacks);
 $('gpxFile').addEventListener('change', e=>{ const f=e.target.files[0]; if(f){ if(gpxMode==='pack') importPack(f); else importRide(f); } e.target.value=''; });
 
 // ---------- sheet ----------
@@ -426,9 +447,9 @@ async function renderTrailsPanel(){
   let packs=[]; try{ packs = await DB.all('packs'); }catch(e){}
   openSheet('Trails & map', `
     <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:4px 0">Your trail maps</h3>
-    <p class="help">The best trail data for these parks is not in OpenStreetMap. Import a GPX trail map (the park's own file, a purchased map, or one from another rider) and it becomes a permanent layer that works offline.</p>
+    <p class="help">Windrock, Coal Creek, Brimstone, Royal Blue and Sundquist trail maps are built in and work offline. Tap a trail for its name. Import any other GPX trail map and it becomes a permanent layer too.</p>
     <div class="actions"><button class="sb primary" id="pImport">Import trail map (GPX)</button></div>
-    ${packs.map(pk=>`<div class="row"><div class="t"><b>${esc(pk.name)}</b><small>${pk.tracks.length} trails · ${pk.wpts.length} points</small></div><button class="sb" data-pshow="${pk.id}">${pk.hidden?'Show':'Hide'}</button><button class="sb" data-pzoom="${pk.id}">Zoom</button><button class="sb danger" data-pdel="${pk.id}">✕</button></div>`).join('')}
+    ${packs.map(pk=>`<div class="row"><div class="t"><b>${esc(pk.name)}</b><small>${pk.tracks.length} trails${pk.wpts.length?` · ${pk.wpts.length} points`:''}${pk.builtin?' · built in':''}</small></div><button class="sb" data-pshow="${pk.id}">${pk.hidden?'Show':'Hide'}</button><button class="sb" data-pzoom="${pk.id}">Zoom</button>${pk.builtin?'':`<button class="sb danger" data-pdel="${pk.id}">✕</button>`}</div>`).join('')}
     <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:18px 0 4px">OpenStreetMap trails</h3>
     <p class="help">Trail lines come from OpenStreetMap and load for whatever is on screen once you are zoomed in to about a 1-mile scale. The first load of a new area can take 10 to 20 seconds. Tap a line for its name, number and surface. Areas you have viewed stay cached for offline use.</p>
     <div class="legend"><span><i style="border-color:#ff8a1f"></i>Track / OHV road</span><span><i style="border-color:#ffe066;border-top-style:dashed"></i>Path / singletrack</span><span><i style="border-color:#cfd8d0"></i>Road</span><span><i style="border-color:#ff5c5c"></i>Recording</span><span><i style="border-color:#5bd36a"></i>Saved ride</span></div>

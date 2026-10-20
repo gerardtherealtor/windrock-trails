@@ -1,0 +1,77 @@
+[
+ {
+  "id": "builtin:windrock",
+  "name": "Windrock Park",
+  "file": "maps/windrock.json",
+  "ver": "eefbad4d24",
+  "color": "#ff8a1f",
+  "bounds": [
+   36.04408,
+   -84.42411,
+   36.26531,
+   -84.19123
+  ],
+  "trails": 87,
+  "points": 22
+ },
+ {
+  "id": "builtin:coalcreek",
+  "name": "Coal Creek OHV",
+  "file": "maps/coalcreek.json",
+  "ver": "d2b8e51678",
+  "color": "#ffd166",
+  "bounds": [
+   36.04734,
+   -84.42705,
+   36.28025,
+   -84.18352
+  ],
+  "trails": 207,
+  "points": 0
+ },
+ {
+  "id": "builtin:brimstone",
+  "name": "Brimstone Recreation",
+  "file": "maps/brimstone.json",
+  "ver": "fefea6d24c",
+  "color": "#ff5c8a",
+  "bounds": [
+   36.2521,
+   -84.55249,
+   36.3892,
+   -84.37679
+  ],
+  "trails": 102,
+  "points": 0
+ },
+ {
+  "id": "builtin:royalblue",
+  "name": "Royal Blue WMA",
+  "file": "maps/royalblue.json",
+  "ver": "25b61bfdca",
+  "color": "#4cc3ff",
+  "bounds": [
+   36.12736,
+   -84.44833,
+   36.44992,
+   -84.23108
+  ],
+  "trails": 129,
+  "points": 0
+ },
+ {
+  "id": "builtin:sundquist",
+  "name": "Sundquist WMA",
+  "file": "maps/sundquist.json",
+  "ver": "1dfcb3d73e",
+  "color": "#b58cff",
+  "bounds": [
+   36.35824,
+   -84.28238,
+   36.48766,
+   -84.05443
+  ],
+  "trails": 117,
+  "points": 0
+ }
+]
